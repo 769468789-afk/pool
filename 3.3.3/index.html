@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>春的随机诗篇</title>
+    <!-- Google Fonts: 卡通手写字体 -->
+    <link href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&family=Comic+Neue:wght@400;700&display=swap" rel="stylesheet">
+    <!-- 忽略 favicon 请求，避免 404 -->
+    <link rel="icon" href="data:,">
+    <!-- PWA 配置 -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <style>
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: #1e2a2e;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        canvas {
+            display: block;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+            border-radius: 12px;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <!-- p5.sound 库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/addons/p5.sound.min.js"></script>
+</head>
+<body>
+<script>
+// ========== 春的随机诗篇 ==========
+// 背景散文诗：黑体风格 (sans-serif)
+// 随机诗篇：卡通手写字体 (ZCOOL KuaiLe + Comic Neue)，英文黑色，中文白色，带光晕
+// 背景保留春色径向渐变，圆点风粒子恢复暖白色（旧版简洁实现）
+// 功能：山脉波动、粉色标记、飘落字母、春风粒子（受风声影响速度）
+// 音频：风声环境音（循环，音量影响粒子速度）；单击中央按钮后切换为轻柔吉他纯音乐
+// 交互：首次点击画布任意位置启动风声；单击圆形按钮触发终焉之风并切换音乐；单击花团中的任何花朵或叶子重启程序
+
+let cellSize = 20;
+const cols = 30;
+const rows = 40;
+
+let gridChar = [];
+let gridSakura = [];
+let nearTops = [];
+let farTops = [];
+
+let fallingLetters = [];
+let particles = [];
+const PARTICLE_COUNT = 120;
+
+// 终焉之风标志
+let finalWind = false;
+let finalWindStart = 0;
+
+// 阶段管理
+let stage = 0;               // 0:正常, 1:吹散, 2:诗篇显示, 3:花团生长
+let poemLines = [];
+let textIndex2 = 0;
+let poemComplete = false;
+let totalChars = 0;
+
+// 花团相关
+let flowerCluster = [];
+let clusterGrowProgress = 0;
+const CLUSTER_GROW_SPEED = 0.01;
+
+// 按钮参数
+let buttonVisible = true;
+let buttonX, buttonY, buttonR = 20;
+
+// 打字机速度
+const TYPEWRITER_INTERVAL = 5;
+
+// ========== 音频相关 ==========
+let windSound;               // 风声环境音
+let guitarSound;             // 吉他背景乐
+let windAmp;                 // 风声振幅分析器
+let windStarted = false;     // 风声是否已启动
+let guitarStarted = false;   // 吉他是否已启动
+let transitionFrame = -1;    // 过渡帧计数器，-1表示不在过渡中
+const TRANSITION_FRAMES = 120; // 过渡帧数（约2秒）
+
+// 诗库（10首春日诗歌，简体）
+const poems = [
+  { author: "Percy Bysshe Shelley", authorCN: "珀西·比希·雪莱", text: "If Winter comes, can Spring be far behind?", trans: "冬天来了，春天还会远吗？" },
+  { author: "Pablo Neruda", authorCN: "巴勃罗·聂鲁达", text: "You can cut all the flowers, but you cannot keep Spring from coming.", trans: "你能砍掉所有的鲜花，但你不能阻止春天的到来。" },
+  { author: "Emily Dickinson", authorCN: "艾米莉·狄金森", text: "A Light exists in Spring\nNot present on the Year\nAt any other period —\nWhen March is scarcely here", trans: "春日里有一道光\n一年中其他时节\n从不曾出现——\n除了少有的三月天" },
+  { author: "Christina Rossetti", authorCN: "克里斯蒂娜·罗塞蒂", text: "Spring is when life's alive in everything.", trans: "春天是万物生机勃勃的时节。" },
+  { author: "Doug Larson", authorCN: "道格·拉森", text: "Spring is when you feel like whistling, even with a shoe full of slush.", trans: "所谓春天，就是即使鞋子里满是泥泞，你也想吹口哨的时候。" },
+  { author: "Robert Browning", authorCN: "罗伯特·勃朗宁", text: "The year's at the spring,\nAnd day's at the morn;\nMorning's at seven;\nThe hillside's dew-pearled,\nThe lark's on the wing,\nThe snail's on the thorn:\nGod's in His heaven —\nAll's right with the world!", trans: "一年正当春，一日正当晨；\n晨光恰在七时临；\n山坡缀满露珠银，\n云雀展翅长空振，\n蜗牛静栖荆棘根；\n上帝安居天国里，\n世间万物皆安顺！" },
+  { author: "William Shakespeare", authorCN: "威廉·莎士比亚", text: "April hath put a spirit of youth in everything.", trans: "四月将勃勃生机注入万物。" },
+  { author: "Henry David Thoreau", authorCN: "亨利·戴维·梭罗", text: "Spring is the season of bloom and rebirth.", trans: "春天是绽放与重生的季节。" },
+  { author: "Emily Dickinson", authorCN: "艾米莉·狄金森", text: "I have a Bird in spring\nWhich for myself doth sing —\nThe spring decoys —\nAnd as the summer nears —\nRobin is gone —", trans: "我在春天拥有一只鸟\n它只为我一人而歌唱——\n春色在招引——\n可是当夏天临近——\n知更鸟便飞走了——" },
+  { author: "Gerard Manley Hopkins", authorCN: "杰拉尔德·曼利·霍普金斯", text: "Nothing is so beautiful as spring —\nWhen weeds, in wheels, shoot long and lovely and lush.", trans: "没有什么比春天更美——\n当杂草如轮般生长，修长、可爱而繁茂。" }
+];
+
+// 英文散文诗（背景文字）
+const poemText = `March is the time for wanderers to set out on their journeys. They embark from March, just as words emerge from expression and songs arise from joy. Lambs become bold, the world is gentle, the avenue is bright, and even stones carry kindness. Villages are like baskets filled with sunshine, children run on the ridges of fields, and the elderly sit quietly under the walls. The soil is soft like a pillow, waiting for seeds to fall. The spring breeze brushes through the branches, and the willow branches stretch out, like long hair combed by the wind, writing free and easy poems in midair. Every swaying strand is the gentlest confession to the earth. Spring rain falls, fine and dense like needles, awakening the sleeping earth. Each drop of water is a stitch of time, carefully sewing up the cracks left by winter. The thawing stream, tinkling and singing a song of freedom, flows through valleys and fields, bringing vitality to the distant places. Grass shoots push their way out of the soil, with the stubbornness and softness of new life, gradually spreading out like a green and tender carpet; the tender buds raise their small cups, catching the sunshine and the dew, growing slowly in the spring breeze, taking on the shape of hope. The blooming of flowers is the most touching chapter of spring. The warmth accumulated over the winter quietly blossoms on the branches, shy in pink, clear in white, and fiery in red. One, two, ten thousand flowers light up the silent branches into passionate verses. When the wind blows, the fragrance of flowers spreads beyond the courtyard walls, and butterflies and bees follow the fragrance, shuttling and dancing among the flowers. Their wings fan the sunlight, shaking off tiny warmth. They do not ask for a return journey, only loving the fragrance of flowers, and telling the world with their lightsome posture that all beauty is worth pursuing and guarding. Spring knows no nationality; white clouds are citizens of the world. It transcends mountains, rivers, and seas, spreading tenderness and vitality to every inch of land. In spring, people shed the heaviness of winter, dispel their sorrows, wipe away their tears, and smile towards the sun. Even if there is not yet a flood of flowers or a lush green canopy, the new life that emerges from the soil is enough to heal all exhaustion and confusion. Sunlight pierces through the gaps in the clouds, like a golden key unlocking the frozen earth. Everything stretches out in the light, growing like lines in a poem. Falling petals are not the end, but the eternal prelude. Spring is an unfinished poem, repeatedly written in the cycle of life. It awakens hope with vitality, soothes vicissitudes with tenderness, and allows every person with a heart full of beauty to meet a new version of themselves in the spring breeze, encountering endless light and warmth.`;
+
+let textStr = poemText;
+let textIndex = 0;
+
+// ------------------------------------------------
+function preload() {
+  // 加载音频文件（若失败仅控制台警告，不影响动画）
+  windSound = loadSound('music/wind.mp3', 
+    () => console.log('风声加载成功'),
+    (err) => console.warn('风声加载失败，请确保 music/wind.mp3 存在', err)
+  );
+  guitarSound = loadSound('music/guitar.mp3',
+    () => console.log('吉他加载成功'),
+    (err) => console.warn('吉他加载失败，请确保 music/guitar.mp3 存在', err)
+  );
+}
+
+function setup() {
+  createCanvas(600, 800);
+  textAlign(CENTER, CENTER);
+  textSize(15);
+  // 背景散文诗：黑体风格 (sans-serif)
+  textFont('Arial, Helvetica, sans-serif');
+  noStroke();
+
+  buttonX = width/2;
+  buttonY = height/2;
+
+  // 山脉轮廓
+  for (let i = 0; i < cols; i++) {
+    let nearBase = 620 + 45 * sin(i * 0.15) + 30 * sin(i * 0.3 + 1.2);
+    nearTops[i] = constrain(nearBase, 550, 690);
+    let farBase = 450 + 45 * sin(i * 0.1 + 2.0) + 30 * sin(i * 0.25 + 0.5);
+    farTops[i] = constrain(farBase, 380, 540);
+  }
+
+  // 初始化网格
+  initGrid();
+
+  // 初始化春风粒子（使用旧版简洁粒子）
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    particles.push(new Particle());
+  }
+
+  // 初始化振幅分析器（专门监听风声）
+  windAmp = new p5.Amplitude();
+  if (windSound) {
+    windAmp.setInput(windSound);
+  }
+
+  // 请求音频上下文，允许用户手势后播放
+  userStartAudio();
+}
+
+// 初始化网格（重置山脉字母和飘落字母）
+function initGrid() {
+  // 重新生成网格字符
+  for (let i = 0; i < cols; i++) {
+    gridChar[i] = [];
+    gridSakura[i] = [];
+  }
+
+  let index = 0;
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      let y = j * cellSize + cellSize / 2;
+      let inMountains = (y >= nearTops[i] && y <= height) || (y >= farTops[i] && y <= height);
+      if (!inMountains) {
+        gridChar[i][j] = '';
+        gridSakura[i][j] = false;
+        continue;
+      }
+      let ch = textStr.charAt(index % textStr.length);
+      index++;
+      let isSakura = random() < 0.10;
+      gridChar[i][j] = ch;
+      gridSakura[i][j] = isSakura;
+    }
+  }
+  textIndex = index;
+
+  // 重置飘落字母
+  fallingLetters = [];
+  for (let idx = 0; idx < 20; idx++) {
+    let ch = textStr.charAt(textIndex % textStr.length);
+    textIndex++;
+    fallingLetters.push(new FallingLetter(ch));
+  }
+}
+
+// 山脉颜色
+function getMountainColor(i, j, isSakura) {
+  let y = j * cellSize + cellSize / 2;
+  let terrain = (y >= nearTops[i] && y <= height) ? 'near' : 'far';
+  if (isSakura) return color(250, 150, 170);
+  let variant = 0.8 + 0.4 * sin(i * 0.8 + frameCount * 0.01);
+  if (terrain === 'near') {
+    let g = map(y, nearTops[i], height, 150, 110);
+    g = g * variant;
+    g = constrain(g, 80, 180);
+    if (y <= nearTops[i] + 8) g = constrain(g - 35, 60, 150);
+    return color(40, g, 40);
+  } else {
+    let g = map(y, farTops[i], height, 110, 60);
+    g = g * variant;
+    g = constrain(g, 40, 140);
+    if (y <= farTops[i] + 8) g = constrain(g - 30, 30, 120);
+    return color(20, g, 50);
+  }
+}
+
+// 渐变天空
+function drawSkyGradient() {
+  let ctx = drawingContext;
+  let gradient = ctx.createLinearGradient(0, height, 0, 0);
+  gradient.addColorStop(0, '#fffaf0');
+  gradient.addColorStop(0.3, '#e2f0ff');
+  gradient.addColorStop(0.7, '#b5d5ff');
+  gradient.addColorStop(1, '#7fa9d6');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
+}
+
+// 绘制山脉字符
+function drawMountainLetters() {
+  for (let i = 0; i < cols; i++) {
+    for (let j = 0; j < rows; j++) {
+      if (gridChar[i][j] === '') continue;
+      let baseX = i * cellSize + cellSize / 2;
+      let baseY = j * cellSize + cellSize / 2;
+      let ch = gridChar[i][j];
+      let isSakura = gridSakura[i][j];
+      let t = frameCount * 0.02;
+      let offsetX = 1.0 * sin(t + i * 0.5 + j * 0.3);
+      let offsetY = 0.5 * cos(t + i * 0.3 + j * 0.5);
+      let finalOffsetX = 0, finalOffsetY = 0;
+      let alpha = 255;
+      if (finalWind) {
+        let noiseValX = noise(i * 0.1, j * 0.1, frameCount * 0.01);
+        let noiseValY = noise(i * 0.1 + 10, j * 0.1 + 10, frameCount * 0.01);
+        let strength = map(frameCount - finalWindStart, 0, 300, 0, 30);
+        finalOffsetX = map(noiseValX, 0, 1, -strength, strength);
+        finalOffsetY = map(noiseValY, 0, 1, -strength, strength);
+        alpha = map(frameCount - finalWindStart, 0, 400, 255, 0);
+        alpha = constrain(alpha, 0, 255);
+      }
+      let col = getMountainColor(i, j, isSakura);
+      col.setAlpha(alpha);
+      fill(col);
+      text(ch, baseX + offsetX + finalOffsetX, baseY + offsetY + finalOffsetY);
+    }
+  }
+}
+
+// ========== 春风粒子类（旧版简洁实现，暖白圆点） ==========
+class Particle {
+  constructor() {
+    this.reset();
+  }
+  reset() {
+    this.x = random(width);
+    this.y = random(height * 0.2, height * 0.9);
+    this.baseVx = random(0.3, 1.2);
+    this.baseVy = random(-0.3, 0.3);
+    this.vx = this.baseVx;
+    this.vy = this.baseVy;
+    this.size = random(2, 5);
+    this.alpha = random(100, 200);
+    this.color = color(255, 230, 200, this.alpha); // 暖白色
+  }
+  update() {
+    // 获取风声振幅（仅当风声正在播放且未进入过渡时）
+    let vol = 0;
+    if (windSound && windSound.isPlaying()) {
+      vol = windAmp.getLevel(); // 0~1
+    }
+    // 根据振幅调整速度
+    let speedFactor = 1 + vol * 3;
+    this.vx = this.baseVx * speedFactor;
+    this.vy = this.baseVy * speedFactor;
+
+    this.x += this.vx;
+    this.y += this.vy;
+    if (this.x > width + 20) this.x = -20;
+    if (this.x < -20) this.x = width + 20;
+    if (this.y > height + 20) this.y = -20;
+    if (this.y < -20) this.y = height + 20;
+  }
+  display() {
+    fill(this.color);
+    noStroke();
+    ellipse(this.x, this.y, this.size);
+  }
+}
+
+// 飘落字母类
+class FallingLetter {
+  constructor(ch) {
+    this.ch = ch;
+    this.reset();
+  }
+  reset() {
+    this.x = random(30, width - 30);
+    this.y = random(-60, -20);
+    this.vx = random(-0.3, 0.3);
+    this.vy = random(1.5, 2.2);
+    this.active = true;
+    this.targetI = -1; this.targetJ = -1;
+    this.wavePhase = random(TWO_PI);
+  }
+  update() {
+    if (!this.active) return;
+    if (finalWind) {
+      this.x += random(-1, 1);
+      this.y += random(-1, 1);
+      return;
+    }
+    let wave = 1.5 * sin(frameCount * 0.05 + this.wavePhase);
+    this.x += this.vx + wave * 0.1;
+    this.y += this.vy;
+    this.vx += random(-0.03, 0.03);
+    this.vx = constrain(this.vx, -0.8, 0.8);
+    if (this.y > height + 30 || this.x < -30 || this.x > width + 30) {
+      this.reset();
+      return;
+    }
+    this.checkLanding();
+  }
+  checkLanding() {
+    let i = floor(this.x / cellSize);
+    let j = floor(this.y / cellSize);
+    if (i < 0 || i >= cols || j < 0 || j >= rows) return;
+    let yc = j * cellSize + cellSize / 2;
+    let inM = (yc >= nearTops[i] && yc <= height) || (yc >= farTops[i] && yc <= height);
+    if (!inM) return;
+    let threshold = floor(rows * 0.6);
+    if (j < threshold && random() > 0.2) return;
+    for (let l of fallingLetters) {
+      if (l !== this && l.targetI === i && l.targetJ === j && l.active) return;
+    }
+    this.targetI = i; this.targetJ = j;
+    let nextCh = textStr.charAt(textIndex % textStr.length);
+    textIndex++;
+    gridChar[i][j] = nextCh;
+    gridSakura[i][j] = true;
+    this.reset();
+  }
+  display() {
+    if (!this.active) return;
+    let alpha = finalWind ? map(frameCount - finalWindStart, 0, 400, 220, 0) : 220;
+    alpha = constrain(alpha, 0, 220);
+    push();
+    textSize(18);
+    fill(255, 230, 240, alpha);
+    text(this.ch, this.x, this.y);
+    pop();
+  }
+}
+
+// 花团粒子（带枝干）
+class ClusterFlower {
+  constructor(x, y, type) {
+    this.baseX = x;
+    this.baseY = y;
+    this.x = x;
+    this.y = y;
+    this.type = type; // 'sakura' or 'leaf'
+    this.baseSize = type === 'sakura' ? random(8, 16) : random(6, 14);
+    this.phase = random(TWO_PI);
+    this.angle = random(TWO_PI);
+    // 枝干长度随机
+    this.stemLength = random(10, 25);
+  }
+  update(growFactor) {
+    let breath = 1 + 0.15 * sin(frameCount * 0.05 + this.phase);
+    this.currentSize = this.baseSize * breath * growFactor;
+    this.x = this.baseX + 1 * sin(frameCount * 0.03 + this.phase);
+    this.y = this.baseY + 1 * cos(frameCount * 0.02 + this.phase);
+  }
+  display() {
+    if (this.currentSize <= 0) return;
+    push();
+    translate(this.x, this.y);
+    // 绘制枝干（垂直向下延伸）
+    stroke(60, 120, 30, 150 * (clusterGrowProgress));
+    strokeWeight(1.5);
+    line(0, 0, 0, this.stemLength * clusterGrowProgress);
+    // 绘制花朵/叶子
+    if (this.type === 'sakura') {
+      fill(250, 150, 170, 220);
+      noStroke();
+      for (let i = 0; i < 5; i++) {
+        let a = TWO_PI * i / 5 + this.angle;
+        ellipse(cos(a)*this.currentSize*0.3, sin(a)*this.currentSize*0.3, this.currentSize*0.5, this.currentSize*0.3);
+      }
+      fill(255, 200, 200, 220);
+      ellipse(0, 0, this.currentSize*0.2);
+    } else {
+      fill(100, 180, 70, 200);
+      noStroke();
+      ellipse(0, 0, this.currentSize*0.8, this.currentSize*0.4);
+      stroke(50, 120, 30, 150);
+      strokeWeight(1);
+      line(0, -this.currentSize*0.2, 0, this.currentSize*0.2);
+    }
+    pop();
+  }
+  // 检测点是否在粒子内（用于点击重启）
+  contains(px, py) {
+    let d = dist(px, py, this.x, this.y);
+    return d < this.currentSize;
+  }
+}
+
+// 初始化随机诗篇
+function initPoem() {
+  let p = random(poems);
+  let lines = [];
+  let textLines = p.text.split('\n');
+  for (let line of textLines) {
+    lines.push(line);
+  }
+  lines.push("— " + p.author);
+  lines.push("");
+  let transLines = p.trans.split('\n');
+  for (let line of transLines) {
+    lines.push(line);
+  }
+  lines.push("—— " + p.authorCN);
+  return lines;
+}
+
+// 生成花团（离最后一个字符更远）
+function createFlowerCluster(centerX, centerY) {
+  let offsetX = 60, offsetY = 60;
+  let baseX = centerX + offsetX;
+  let baseY = centerY + offsetY;
+  let count = floor(random(25, 40));
+  for (let i = 0; i < count; i++) {
+    let angle = random(TWO_PI);
+    let r = random(10, 45);
+    let x = baseX + cos(angle) * r;
+    let y = baseY + sin(angle) * r;
+    x = constrain(x, 20, width-20);
+    y = constrain(y, 20, height-20);
+    let type = random() < 0.6 ? 'sakura' : 'leaf';
+    flowerCluster.push(new ClusterFlower(x, y, type));
+  }
+}
+
+// 绘制按钮
+function drawButton() {
+  if (!finalWind && buttonVisible) {
+    push();
+    fill(255, 30);
+    stroke(255, 100);
+    strokeWeight(2);
+    ellipse(buttonX, buttonY, buttonR*2);
+    pop();
+  }
+}
+
+// 鼠标单击处理
+function mousePressed() {
+  // 首次点击任意位置：启动风声
+  if (!windStarted && windSound && windSound.isLoaded()) {
+    windSound.loop();
+    windSound.setVolume(0.2);
+    windStarted = true;
+  }
+
+  // 检查是否点击了圆形按钮
+  if (!finalWind && buttonVisible) {
+    let d = dist(mouseX, mouseY, buttonX, buttonY);
+    if (d < buttonR) {
+      finalWind = true;
+      finalWindStart = frameCount;
+      buttonVisible = false;
+      transitionFrame = 0;
+    }
+  }
+
+  // 如果在花团阶段（stage 3），检查是否点击了任何花团粒子
+  if (stage === 3) {
+    for (let f of flowerCluster) {
+      if (f.contains(mouseX, mouseY)) {
+        restartProgram();
+        break;
+      }
+    }
+  }
+}
+
+// 重启程序（重置所有状态）
+function restartProgram() {
+  // 重置阶段变量
+  finalWind = false;
+  finalWindStart = 0;
+  stage = 0;
+  buttonVisible = true;
+  transitionFrame = -1;
+  poemLines = [];
+  textIndex2 = 0;
+  poemComplete = false;
+  totalChars = 0;
+  flowerCluster = [];
+  clusterGrowProgress = 0;
+
+  // 停止所有音频并重置标志
+  if (windSound && windSound.isPlaying()) {
+    windSound.stop();
+  }
+  if (guitarSound && guitarSound.isPlaying()) {
+    guitarSound.stop();
+  }
+  windStarted = false;
+  guitarStarted = false;
+
+  // 重新初始化网格
+  initGrid();
+
+  // 重置粒子位置
+  for (let p of particles) {
+    p.reset();
+  }
+
+  // 重置音量
+  if (windSound) windSound.setVolume(0.2);
+  if (guitarSound) guitarSound.setVolume(0.3);
+}
+
+// 绘制诗篇（卡通手写字体，英文黑色，中文白色，带光晕）
+function drawPoem() {
+  if (stage !== 2 && stage !== 3) return;
+
+  // 基础磨砂玻璃背景
+  push();
+  fill(255, 25);
+  noStroke();
+  rect(0, 0, width, height);
+  pop();
+
+  // 添加春色径向渐变（呼应山体花朵配色）
+  push();
+  let ctx = drawingContext;
+  let gradient = ctx.createRadialGradient(width/2, height/2, 50, width/2, height/2, 400);
+  gradient.addColorStop(0, 'rgba(255, 200, 200, 0.1)');
+  gradient.addColorStop(0.5, 'rgba(200, 255, 200, 0.1)');
+  gradient.addColorStop(1, 'rgba(255, 255, 255, 0.02)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
+  pop();
+
+  push();
+  // 使用卡通手写字体：中文 ZCOOL KuaiLe，英文 Comic Neue
+  textFont('"ZCOOL KuaiLe", "Comic Neue", cursive');
+  textSize(15);
+  let lineHeight = 24; // 行距适中，不拥挤
+  let startY = height/2 - (poemLines.length * lineHeight)/2;
+
+  // 开启光晕（文字阴影效果）
+  drawingContext.shadowColor = color(255, 255, 255, 80);
+  drawingContext.shadowBlur = 10;
+  drawingContext.shadowOffsetX = 0;
+  drawingContext.shadowOffsetY = 0;
+
+  // 查找空行位置，用于区分英文部分和中文部分
+  let emptyLineIndex = -1;
+  for (let i = 0; i < poemLines.length; i++) {
+    if (poemLines[i] === "") {
+      emptyLineIndex = i;
+      break;
+    }
+  }
+
+  for (let i = 0; i < poemLines.length; i++) {
+    let line = poemLines[i];
+    let displayLine = '';
+
+    if (stage === 2) {
+      let totalCharsBefore = 0;
+      for (let k = 0; k < i; k++) {
+        totalCharsBefore += poemLines[k].length;
+      }
+      let startIdx = totalCharsBefore;
+      let endIdx = min(textIndex2, totalCharsBefore + line.length);
+      displayLine = line.substring(0, endIdx - startIdx);
+    } else {
+      displayLine = line;
+    }
+
+    if (displayLine.length > 0) {
+      // 根据行位置决定颜色：空行之前为英文部分（黑色），空行之后为中文部分（白色）
+      if (emptyLineIndex !== -1 && i > emptyLineIndex) {
+        fill(255, 255, 255, 240); // 白色
+      } else {
+        fill(0, 0, 0, 240); // 黑色
+      }
+      text(displayLine, width/2, startY + i * lineHeight);
+    }
+  }
+
+  // 关闭光晕
+  drawingContext.shadowBlur = 0;
+  drawingContext.shadowOffsetX = 0;
+  drawingContext.shadowOffsetY = 0;
+  pop();
+}
+
+function calcTotalChars(lines) {
+  let sum = 0;
+  for (let l of lines) sum += l.length;
+  return sum;
+}
+
+// ========== 主循环 ==========
+function draw() {
+  drawSkyGradient();
+
+  // 处理音频过渡
+  if (transitionFrame >= 0) {
+    let t = transitionFrame / TRANSITION_FRAMES;
+    if (windSound && windSound.isPlaying()) {
+      windSound.setVolume(0.2 * (1 - t));
+    }
+    if (t >= 1) {
+      if (windSound && windSound.isPlaying()) {
+        windSound.stop();
+      }
+      if (guitarSound && guitarSound.isLoaded() && !guitarStarted) {
+        guitarSound.loop();
+        guitarSound.setVolume(0.3);
+        guitarStarted = true;
+      }
+      transitionFrame = -1;
+    } else {
+      transitionFrame++;
+    }
+  }
+
+  // 更新并绘制粒子（旧版简洁实现）
+  for (let p of particles) {
+    p.update();
+    p.display();
+  }
+
+  drawMountainLetters();
+
+  for (let l of fallingLetters) {
+    l.update();
+    l.display();
+  }
+
+  if (finalWind && stage === 0) {
+    if (frameCount - finalWindStart > 400) {
+      stage = 2;
+      poemLines = initPoem();
+      totalChars = calcTotalChars(poemLines);
+      textIndex2 = 0;
+      poemComplete = false;
+    }
+  }
+
+  if (stage === 2) {
+    drawPoem();
+    if (textIndex2 < totalChars) {
+      if (frameCount % TYPEWRITER_INTERVAL == 0) {
+        textIndex2++;
+      }
+    } else if (!poemComplete) {
+      poemComplete = true;
+      stage = 3;
+      let lineHeight = 24;
+      let startY = height/2 - (poemLines.length * lineHeight)/2;
+      let lastLineIdx = poemLines.length - 1;
+      let lastY = startY + lastLineIdx * lineHeight;
+      let lastX = width/2 + 30;
+      lastY += 15;
+      createFlowerCluster(lastX, lastY);
+    }
+  } else if (stage === 3) {
+    drawPoem();
+    if (clusterGrowProgress < 1) {
+      clusterGrowProgress += CLUSTER_GROW_SPEED;
+    }
+    for (let f of flowerCluster) {
+      f.update(clusterGrowProgress);
+      f.display();
+    }
+  }
+
+  drawButton();
+
+  push();
+  fill(255, 5);
+  noStroke();
+  rect(0, 0, width, height);
+  pop();
+}
+</script>
+<!-- 注册 Service Worker -->
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js')
+      .then(reg => console.log('Service Worker registered', reg))
+      .catch(err => console.log('Service Worker registration failed', err));
+  }
+</script>
+</body>
+</html>
